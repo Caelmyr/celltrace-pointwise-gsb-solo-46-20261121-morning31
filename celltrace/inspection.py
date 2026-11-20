@@ -7,8 +7,10 @@ from .geometry import default_placement, transform_for
 from .images import SensorImage, decode_source, safe_name
 from .model import (
     AnalysisSettings, CAPTURE_ROLES, Calibration, Capture, Inspection, Issue, Placement, Plane,
-    SENSOR_ROLES, ViewSettings, boolean, choice, file_id, integer, mapping, real, text, utcnow,
+    PLACEMENT_ROLES, SENSOR_ROLES, ViewSettings, boolean, choice, file_id, integer, mapping,
+    real, text, utcnow,
 )
+from . import surface as surface_review_module
 from .store import Store, new_id, summary
 
 
@@ -57,7 +59,7 @@ def inspection_payload(inspection: Inspection) -> dict:
     output["summary"] = summary(inspection)
     output["placements"] = {}
     for capture in inspection.captures.values():
-        if capture.role in SENSOR_ROLES:
+        if capture.role in PLACEMENT_ROLES:
             configured = inspection.placements.get(capture.id)
             value = configured or default_placement(capture.width, capture.height)
             output["placements"][capture.id] = {**asdict(value), "explicit": configured is not None}
@@ -90,7 +92,38 @@ class Inspections:
             if frame.corners is not None:
                 item.placements[capture.id] = Placement(frame.corners, frame.orientation)
         item.calibration = Calibration(item.active["dark"], item.active["flat"])
+        item = self.seed_demo_surface(item)
         return self.store.add(item, "synthetic fixture loaded", {"sample": variant, "images": len(images)})
+
+    def seed_demo_surface(self, item: Inspection) -> Inspection:
+        """Pre-trace contamination on the synthetic surface photo for training."""
+        from .model import SurfaceMark, SurfaceReview
+        surface_capture = next((capture for capture in item.captures.values()
+                                if capture.role == "surface"), None)
+        if surface_capture is None:
+            return item
+        now = utcnow()
+        width, height = item.plane.width, item.plane.height
+        # Plane-cell coordinates of the seeded smudges, expressed as normalized polygons.
+        outlines = [
+            ("Elongated handling smudge", "smudge", (
+                (2.30, 1.18), (2.66, 1.14), (3.06, 1.34), (3.02, 1.62),
+                (2.62, 1.68), (2.32, 1.50),
+            )),
+            ("Localized film patch", "film", (
+                (1.24, 2.42), (1.62, 2.40), (1.66, 2.92), (1.28, 2.96),
+            )),
+            # Only clips the left side of the R01C05 dark patch, so the verdict stays partial.
+            ("Corner contact streak", "streak", (
+                (4.40, 0.46), (4.72, 0.44), (4.74, 0.66), (4.42, 0.68),
+            )),
+        ]
+        marks = []
+        for index, (title, kind, polygon) in enumerate(outlines, start=1):
+            points = tuple((col / item.plane.cols, row / item.plane.rows) for col, row in polygon)
+            marks.append(SurfaceMark(new_id(), title, kind, points, "", now, now))
+        item.surface_review = SurfaceReview(surface_capture.id, 4, tuple(marks), {}, "", now)
+        return item
 
     def checked(self, identifier: str, expected, *, editable=True) -> Inspection:
         expected = integer(expected, "Revision", 0, 10**9)
@@ -114,12 +147,27 @@ class Inspections:
             message, details = "panel plane updated", asdict(item.plane)
         elif operation == "placement":
             capture = item.capture(raw.get("capture"))
-            if capture.role not in SENSOR_ROLES:
-                raise Issue("Only an EL frame can receive a panel placement.")
+            if capture.role not in PLACEMENT_ROLES:
+                raise Issue("Only an EL frame or a surface photo can receive a panel placement.")
             placement = Placement.from_dict(raw, capture.width, capture.height)
             transform_for(item.plane, placement)
             item.placements[capture.id] = placement
             message, details = "image placement updated", {"capture": capture.id, **asdict(placement)}
+        elif operation in (
+            "surface-config", "surface-mark-add", "surface-mark-edit",
+            "surface-mark-remove", "surface-verdict",
+        ):
+            if operation == "surface-config":
+                review, message, details = surface_review_module.configure(item, raw)
+            elif operation == "surface-mark-add":
+                review, message, details = surface_review_module.add_mark(item, raw)
+            elif operation == "surface-mark-edit":
+                review, message, details = surface_review_module.edit_mark(item, raw.get("mark"), raw)
+            elif operation == "surface-mark-remove":
+                review, message, details = surface_review_module.remove_mark(item, raw.get("mark"))
+            else:
+                review, message, details = surface_review_module.set_verdict(item, raw)
+            item.surface_review = review
         elif operation == "calibration":
             item.calibration = Calibration.from_dict(raw)
             details = check_calibration(item)
@@ -170,6 +218,8 @@ class Inspections:
         item.captures[capture.id] = capture
         if raw.get("select", "true") == "true" or role not in item.active:
             item.active[role] = capture.id
+        if role == "surface" and item.surface_review.surface_id is None:
+            item.surface_review = replace(item.surface_review, surface_id=capture.id, updated_at=utcnow())
         return self.store.save(item, item.revision, "original imported", {
             "capture": capture.id, "role": capture.role, "digest": capture.digest,
             "size": [capture.width, capture.height], "format": capture.format,
@@ -180,11 +230,13 @@ class Inspections:
         capture = item.capture(capture_id)
         if capture_applies_to_findings(item, capture.id):
             raise Issue("Review evidence uses this capture. Keep its original for traceability.", 409)
+        if item.surface_review.surface_id == capture.id:
+            raise Issue("The surface cross-check uses this photo. Clear the surface review first.", 409)
         if capture.id in (item.calibration.dark_id, item.calibration.flat_id):
             raise Issue("Clear the selected calibration reference before removing this capture.", 409)
         del item.captures[capture.id]
         item.placements.pop(capture.id, None)
-        if item.active.get(capture.role) == capture.id:
+        if capture.role in item.active and item.active.get(capture.role) == capture.id:
             candidates = [entry for entry in item.captures.values() if entry.role == capture.role]
             if candidates:
                 replacement = max(candidates, key=lambda entry: (entry.captured_at, entry.id))

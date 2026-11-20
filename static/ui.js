@@ -4,7 +4,7 @@ export const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;"
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 export const e = escapeHtml;
 
-export const ROLE = {high: "High current", low: "Low current", dark: "Dark reference", flat: "Flat reference"};
+export const ROLE = {high: "High current", low: "Low current", dark: "Dark reference", flat: "Flat reference", surface: "Surface photo"};
 export const availableRoles = (inspection) => ["high", "low"].filter((role) => inspection.active[role]);
 export const readable = (value) => value ? String(value).replaceAll("_", " ") : "—";
 export const format = (value, count = 3) => typeof value === "number"

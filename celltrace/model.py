@@ -16,9 +16,12 @@ ROLE_LABELS = {
     "low": "Low current",
     "dark": "Dark reference",
     "flat": "Flat reference",
+    "surface": "Surface photo",
 }
 CAPTURE_ROLES = frozenset(ROLE_LABELS)
 SENSOR_ROLES = frozenset(("high", "low"))
+# Roles that show the physical module face and can carry a panel placement.
+PLACEMENT_ROLES = frozenset(("high", "low", "surface"))
 FILE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 CELL_RE = re.compile(r"^R([0-9]{2})C([0-9]{2})$")
@@ -27,11 +30,19 @@ FINDING_STATES = frozenset(("open", "hold", "cleared", "confirmed"))
 FINDING_CATEGORIES = frozenset(("dark", "crack", "suspect", "capture", "general"))
 ORIENTATIONS = frozenset(("identity", "rotate180", "mirror-x", "mirror-y"))
 STRING_AXES = frozenset(("columns", "rows"))
+# Surface cross-check verdicts. Automatic values are computed from coverage;
+# the manual value lets the reviewer override the suggestion without editing geometry.
+SURFACE_AUTO_VERDICTS = frozenset((
+    "occluded", "partial", "edge-uncertain", "no-surface-evidence", "obscured-in-surface",
+))
+SURFACE_VERDICTS = frozenset(("auto",)) | SURFACE_AUTO_VERDICTS
+SURFACE_MARK_KINDS = frozenset(("smudge", "streak", "film", "other"))
 MAX_SOURCE_PIXELS = 8_000_000
 MAX_PLANE_PIXELS = 1_500_000
 MAX_UPLOAD_BYTES = 22 * 1024 * 1024
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_FINDINGS = 120
+MAX_SURFACE_MARKS = 60
 MAX_POLYGON_POINTS = 48
 MAX_HISTORY = 80
 
@@ -354,6 +365,72 @@ class Finding:
         )
 
 
+@dataclass(frozen=True)
+class SurfaceMark:
+    """A reviewer-traced contamination outline in plane-normalized coordinates."""
+    id: str
+    title: str
+    kind: str
+    points: tuple[tuple[float, float], ...]
+    note: str
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = mapping(raw, "Surface mark")
+        return cls(
+            file_id(raw.get("id"), "Surface mark ID"),
+            text(raw.get("title"), "Surface mark title", 100),
+            choice(raw.get("kind", "smudge"), "Surface mark kind", SURFACE_MARK_KINDS),
+            xy_list(raw.get("points"), "Surface mark polygon", 3, MAX_POLYGON_POINTS, (0, 1), (0, 1)),
+            text(raw.get("note", ""), "Surface mark note", 1200, allow_blank=True),
+            text(raw.get("created_at"), "Surface mark creation time", 100),
+            text(raw.get("updated_at"), "Surface mark edit time", 100),
+        )
+
+
+@dataclass(frozen=True)
+class SurfaceReview:
+    """Cross-check state between one registered surface photo and the EL dark evidence."""
+    surface_id: str | None = None
+    # Matching tolerance in plane pixels; overlap inside this rim is treated as edge-uncertain.
+    edge_tolerance_px: int = 4
+    marks: tuple[SurfaceMark, ...] = ()
+    # Per dark-region verdict overrides keyed by the dark region id; "auto" clears an override.
+    verdicts: dict[str, str] = field(default_factory=dict)
+    note: str = ""
+    updated_at: str | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict | None):
+        if raw is None:
+            return cls()
+        raw = mapping(raw, "Surface review")
+        surface_id = raw.get("surface_id")
+        marks = tuple(
+            SurfaceMark.from_dict(value)
+            for value in sequence(raw.get("marks", []), "Surface marks", 0, MAX_SURFACE_MARKS)
+        )
+        if len({mark.id for mark in marks}) != len(marks):
+            raise Issue("Surface mark identifiers must be unique.")
+        verdicts = mapping(raw.get("verdicts", {}), "Surface verdicts")
+        for key, value in verdicts.items():
+            text(key, "Dark region reference", 80)
+            choice(value, "Surface verdict", SURFACE_VERDICTS)
+        if len(verdicts) > 400:
+            raise Issue("Too many surface verdict overrides.")
+        updated_at = raw.get("updated_at")
+        return cls(
+            file_id(surface_id, "Surface image ID") if surface_id else None,
+            integer(raw.get("edge_tolerance_px", 4), "Surface edge tolerance", 0, 40),
+            marks,
+            dict(verdicts),
+            text(raw.get("note", ""), "Surface review note", 2000, allow_blank=True),
+            text(updated_at, "Surface review time", 100) if updated_at else None,
+        )
+
+
 @dataclass
 class Inspection:
     id: str
@@ -373,6 +450,7 @@ class Inspection:
     display: ViewSettings = field(default_factory=ViewSettings)
     analysis: AnalysisSettings = field(default_factory=AnalysisSettings)
     findings: list[Finding] = field(default_factory=list)
+    surface_review: SurfaceReview = field(default_factory=SurfaceReview)
     issue: dict | None = None
 
     def to_dict(self) -> dict:
@@ -410,14 +488,19 @@ class Inspection:
         placements = {}
         for key, value in mapping(raw.get("placements", {}), "Placements").items():
             capture = captures.get(key)
-            if capture is None or capture.role not in SENSOR_ROLES:
-                raise Issue("A placement must refer to an EL capture.")
+            if capture is None or capture.role not in PLACEMENT_ROLES:
+                raise Issue("A placement must refer to an EL capture or a surface photo.")
             placements[key] = Placement.from_dict(value, capture.width, capture.height)
         findings = [Finding.from_dict(value) for value in sequence(
             raw.get("findings", []), "Findings", 0, MAX_FINDINGS
         )]
         if len({finding.id for finding in findings}) != len(findings):
             raise Issue("Finding identifiers must be unique.")
+        surface_review = SurfaceReview.from_dict(raw.get("surface_review"))
+        if surface_review.surface_id is not None:
+            surface = captures.get(surface_review.surface_id)
+            if surface is None or surface.role != "surface":
+                raise Issue("The surface review must refer to a surface photo.")
         issue = raw.get("issue")
         if issue is not None:
             issue = mapping(issue, "Issued result")
@@ -442,5 +525,6 @@ class Inspection:
             ViewSettings.from_dict(raw.get("display", {})),
             AnalysisSettings.from_dict(raw.get("analysis", {})),
             findings,
+            surface_review,
             issue,
         )

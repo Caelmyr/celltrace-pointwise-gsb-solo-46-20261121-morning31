@@ -41,6 +41,11 @@ COLUMNS = {
                   "coverage", "contrast", "status"),
     "reference": ("region", "bounds", "pixels", "common", "lost", "gained", "increased",
                   "decreased", "old_median", "new_median", "median_delta", "peak_delta"),
+    "surface": (
+        "dark_region", "cell", "center", "dark_pixels", "verdict", "automatic_verdict",
+        "manual_override", "covered_pixels", "cover_fraction", "rim_pixels", "rim_fraction",
+        "surface_usable_pixels", "support_fraction", "glare_pixels", "glare_fraction",
+    ),
 }
 
 

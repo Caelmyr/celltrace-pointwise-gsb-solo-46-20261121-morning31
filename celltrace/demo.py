@@ -155,6 +155,33 @@ def synthetic_bytes(image: np.ndarray) -> bytes:
     return png_bytes(Image.fromarray(pixels))
 
 
+def surface_panel(plane: Plane, rng) -> np.ndarray:
+    """A plain grayscale module-face view: diffuse gray, smudges and one glare patch."""
+    y, x = np.mgrid[:plane.height, :plane.width].astype(np.float32)
+    nx, ny = x / plane.width, y / plane.height
+    base = 0.52 + 0.05 * np.sin(6.5 * nx + 2.1) + 0.03 * np.cos(8 * ny)
+    base += ndimage.gaussian_filter(rng.normal(size=base.shape).astype(np.float32), 5.0) * 0.03
+    # Faint cell separator texture so the panel geometry stays readable.
+    column = nx * plane.cols
+    row = ny * plane.rows
+    separators = (np.abs(column - np.round(column)) < 0.006) | (np.abs(row - np.round(row)) < 0.006)
+    base[separators] *= 0.92
+    # Smudges in plane-cell coordinates; the long one brushes two EL dark depressions.
+    smudges = [
+        (2.63, 1.47, 0.30, 0.22, 0.42),
+        (2.98, 1.62, 0.26, 0.16, 0.38),
+        (1.43, 2.68, 0.22, 0.30, 0.40),
+        (4.76, 0.63, 0.18, 0.10, 0.30),
+    ]
+    for cx, cy, rx, ry, depth in smudges:
+        ellipse = ((column - cx) / rx) ** 2 + ((row - cy) / ry) ** 2
+        base *= 1 - depth * np.exp(-ellipse ** 1.3)
+    # Specular glare near the right frame and a clipped rim.
+    glare = np.exp(-(((nx - 0.965) / 0.03) ** 2 + ((ny - 0.30) / 0.12) ** 2))
+    base = base * (1 - glare) + glare * 1.05
+    return np.clip(base, 0, 1.15).astype(np.float32)
+
+
 def make_demo(variant: str = "standard") -> tuple[Plane, list[DemoCapture]]:
     seed = 7421 if variant == "standard" else 9375
     rng = np.random.default_rng(seed)
@@ -173,6 +200,13 @@ def make_demo(variant: str = "standard") -> tuple[Plane, list[DemoCapture]]:
     hotspot = np.exp(-(((x - 800) / 36) ** 2 + ((y - 116) / 28) ** 2)) * 0.84
     high = high * gain + dark + hotspot
     low = low * gain + dark + rng.normal(0, 0.002, low.shape).astype(np.float32)
+    surface_corners = ((58, 62), (892, 44), (906, 548), (52, 530))
+    if variant == "stress":
+        # The surface frame crops the right edge, so part of the panel has no surface support.
+        surface_corners = ((58, 62), (1018, 48), (1032, 546), (52, 530))
+    surface_face = surface_panel(plane, rng)
+    surface_camera = project_to_camera(surface_face, frame_shape, surface_corners, False)
+    surface_camera = np.clip(surface_camera + rng.normal(0, 0.004, frame_shape).astype(np.float32), 0, 1.15)
     return plane, [
         DemoCapture("high", f"SYN-{variant}-high.png", synthetic_bytes(high), high_corners,
                     "identity", 100, 8.5),
@@ -182,4 +216,6 @@ def make_demo(variant: str = "standard") -> tuple[Plane, list[DemoCapture]]:
                     "identity", 100, None),
         DemoCapture("flat", f"SYN-{variant}-flat.png", synthetic_bytes(flat), None,
                     "identity", 100, None),
+        DemoCapture("surface", f"SYN-{variant}-surface.png", synthetic_bytes(surface_camera),
+                    surface_corners, "identity", 120, None),
     ]

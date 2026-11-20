@@ -25,7 +25,7 @@ export function renderCaptures(app, root) {
         ${frame.current_a ? ` · ${frame.current_a} A` : ""}</p>
         <div class="row-actions">
           <button type="button" data-action="details" data-frame="${frame.id}" class="compact">Image details</button>
-          ${["high", "low"].includes(role) ? `<button type="button" data-action="placement" data-frame="${frame.id}" class="compact">Corners</button>` :
+          ${["high", "low", "surface"].includes(role) ? `<button type="button" data-action="placement" data-frame="${frame.id}" class="compact">Corners</button>` :
             `<button type="button" data-action="reference" data-frame="${frame.id}" class="compact">Banding</button>`}
           ${closed || selected ? "" : `<button type="button" data-action="select" data-frame="${frame.id}" class="compact">Use this image</button>`}
           ${download(app.url(`/captures/${frame.id}/raw`), "Original")}
@@ -66,9 +66,9 @@ function uploadDialog(app) {
   const selector = $('select[name=role]', root);
   const current = $('input[name=current_a]', root);
   function toggleCurrent() {
-    const calibration = REF_ROLES.includes(selector.value);
-    current.disabled = calibration;
-    if (calibration) current.value = "";
+    const sensorRole = ["high", "low"].includes(selector.value);
+    current.disabled = !sensorRole;
+    if (!sensorRole) current.value = "";
   }
   selector.onchange = toggleCurrent;
   toggleCurrent();

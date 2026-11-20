@@ -6,9 +6,10 @@ from .engine import Engine
 from .findings import list_findings
 from .inspection import Inspections
 from .lot import source as lot_source
-from .model import Issue, ROLE_LABELS, choice, text, utcnow
+from .model import Inspection, Issue, ROLE_LABELS, choice, text, utcnow
 from .packets import PacketWriter
 from .render import RenderOptions, render_layer
+from . import surface as surface_module
 from .store import Store, data_digest, serial_json
 from .tables import csv_data
 
@@ -54,6 +55,7 @@ def summarize_for_issue(inspection, engine: Engine, events: list[dict]) -> dict:
         else:
             sections["response"] = {"summary": result["summary"], "records": len(result["rows"])}
     active = {role: capture_info(inspection.captures[identifier]) for role, identifier in inspection.active.items()}
+    surface_crosscheck = surface_section(engine, inspection)
     return {
         "module": inspection.module,
         "lot": inspection.lot,
@@ -67,9 +69,30 @@ def summarize_for_issue(inspection, engine: Engine, events: list[dict]) -> dict:
         "capture_inventory": active,
         "findings": findings,
         "sections": sections,
+        "surface_crosscheck": surface_crosscheck,
         "events": events[:14],
         "blockers": blockers,
         "messages": messages,
+    }
+
+
+def surface_section(engine: Engine, inspection: Inspection) -> dict | None:
+    review = inspection.surface_review
+    if review.surface_id is None:
+        return None
+    try:
+        result = surface_module.cross_check(engine, inspection, "high")
+    except Issue:
+        return None
+    return {
+        "surface": result["surface"],
+        "edge_tolerance_px": result["edge_tolerance_px"],
+        "surface_coverage": result["surface_coverage"],
+        "glare_pixels": result["glare_pixels"],
+        "marks": result["marks"],
+        "counts": result["counts"],
+        "rows": result["rows"],
+        "note": result["note"],
     }
 
 
@@ -98,6 +121,11 @@ def report_documents(inspection, engine: Engine, preview: dict) -> tuple[dict, d
     }
     if "response" in preview["sections"]:
         media["response"] = render_layer(inspection, engine, "high", "response", RenderOptions(True, False))
+    if preview.get("surface_crosscheck"):
+        context = engine.panel_context(inspection, "high")
+        media["surface"] = surface_module.cross_check_image(
+            engine, inspection, "high", context.panel,
+        )
     tables = {}
     for kind in preview["sections"]:
         measurement = engine.table(inspection, "high", kind)
@@ -106,6 +134,12 @@ def report_documents(inspection, engine: Engine, preview: dict) -> tuple[dict, d
             rows = [{"metric": name, "value": value} for name, value in measurement["summary"].items()]
         tables[kind] = csv_data(kind, rows)
     tables["findings"] = csv_data("findings", finding_rows(preview["findings"]))
+    surface_review = preview.get("surface_crosscheck")
+    if surface_review:
+        tables["surface"] = csv_data("surface", [
+            {key: value for key, value in row.items() if key != "bounds"}
+            for row in surface_review["rows"]
+        ])
     return media, tables
 
 
@@ -206,6 +240,16 @@ def printable(payload: dict, media: dict[str, bytes]) -> bytes:
         [row["title"], row["cell"], row["category"], row["status"], row["source_role"], row["note"]]
         for row in report["findings"]
     ]
+    surface = report.get("surface_crosscheck")
+    surface_media = media["surface"] if surface and "surface" in media else None
+    surface_rows = []
+    if surface:
+        surface_rows = [
+            [row["dark_region"], row["cell"], row["dark_pixels"],
+             f'{row["cover_fraction"]:.3f}', f'{row["support_fraction"]:.3f}',
+             row["verdict"], "yes" if row["manual_override"] else "auto"]
+            for row in surface["rows"]
+        ]
     highlights = report_highlights(report["sections"])
     origins = [
         [row["revision"], row["at"], row["action"]]
@@ -228,6 +272,7 @@ def printable(payload: dict, media: dict[str, bytes]) -> bytes:
       <section><h2>Reviewed findings</h2>
        {html_table(("Observation", "Cell", "Category", "State", "Source", "Note"), findings)}
       </section>
+      {surface_html(surface, surface_media, surface_rows)}
       <section><h2>Capture lineage</h2>
        {html_table(("Role", "Image", "Native size", "Samples", "Exposure", "Current A", "SHA-256"), files)}
       </section>
@@ -245,7 +290,35 @@ def image_title(kind):
         "panel": "Grid with reviewed findings", "quality": "Usable coverage and image-quality flags",
         "dark": "Connected dark evidence", "cracks": "Thin dark-line candidates",
         "response": "Paired-current relative response",
+        "surface": "EL dark regions labeled by surface cross-check verdict",
     }[kind]
+
+
+def surface_html(surface, media_png, rows):
+    if not surface:
+        return ""
+    picture = ""
+    if media_png is not None:
+        picture = f'<figure><img alt="Surface cross-check" src="data:image/png;base64,{b64encode(media_png).decode("ascii")}"><figcaption>Surface cross-check verdicts on the EL plane</figcaption></figure>'
+    counts = surface["counts"]
+    summary = ", ".join(f"{label}: {counts.get(key, 0)}" for key, label in (
+        ("occluded", "occluded"), ("partial", "partial"), ("edge-uncertain", "edge uncertain"),
+        ("obscured-in-surface", "obscured in surface"), ("no-surface-evidence", "no surface evidence"),
+    ))
+    marks = ", ".join(mark["title"] for mark in surface["marks"]) or "none"
+    return f"""
+      <section><h2>Surface photo cross-check</h2>
+       {definition_list([
+           ("Surface photo", surface["surface"]["name"]),
+           ("Surface coverage", f'{surface["surface_coverage"]:.1%}'),
+           ("Edge tolerance", f'{surface["edge_tolerance_px"]} plane px'),
+           ("Contamination marks", marks),
+           ("Verdict counts", summary),
+           ("Review note", surface["note"] or "—"),
+       ])}
+       <div class="figures">{picture}</div>
+       {html_table(("Dark region", "Cell", "Pixels", "Mark cover", "Surface support", "Verdict", "Source"), rows)}
+      </section>"""
 
 
 def report_highlights(sections):

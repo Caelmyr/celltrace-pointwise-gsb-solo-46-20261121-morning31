@@ -4,10 +4,11 @@ import {
 import {renderWorkbench} from "./bench.js";
 import {renderCaptures, showPlane} from "./captures.js";
 import {renderFindings, renderLot, renderReport, showHistory} from "./reviews.js";
+import {renderSurface} from "./surface.js";
 
 const TABS = [
-  ["bench", "Image bench"], ["captures", "Captures"], ["findings", "Findings"],
-  ["report", "Report"], ["lot", "Lot review"],
+  ["bench", "Image bench"], ["captures", "Captures"], ["surface", "Surface check"],
+  ["findings", "Findings"], ["report", "Report"], ["lot", "Lot review"],
 ];
 
 class CellTraceApp {
@@ -18,7 +19,7 @@ class CellTraceApp {
     this.inspections = [];
     this.case = null;
     this.workspace = {layer: "panel", role: "high", grid: true, labels: true, findings: true, mode: "probe", zoom: 100,
-      points: [], cell: "", probe: null, measure: null};
+      points: [], cell: "", probe: null, measure: null, surface: {mode: "view", points: [], role: "high", mark: null}};
     this.tab = "bench";
     this.searchTimer = null;
     this.toastTimer = null;
@@ -99,6 +100,7 @@ class CellTraceApp {
         role: availableRoles(data)[0] ?? "high", layer: "panel",
         mode: "probe", cell: "", points: [], measure: null, probe: null, zoom: 100,
       });
+      this.workspace.surface = {mode: "view", points: [], role: "high", mark: null};
     }
     if (writeUrl) this.navigate();
     this.renderCases();
@@ -181,7 +183,8 @@ class CellTraceApp {
     $("#case-plane").onclick = () => showPlane(this);
     $$("[data-tab]").forEach((node) => { node.onclick = () => this.showTab(node.dataset.tab); });
     const view = $("#active-view");
-    const renderTab = {bench: renderWorkbench, captures: renderCaptures, findings: renderFindings, report: renderReport, lot: renderLot};
+    const renderTab = {bench: renderWorkbench, captures: renderCaptures, surface: renderSurface,
+      findings: renderFindings, report: renderReport, lot: renderLot};
     renderTab[this.tab](this, view);
   }
 

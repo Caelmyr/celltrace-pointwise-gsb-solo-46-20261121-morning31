@@ -27,6 +27,7 @@ from .render import (
 from .reference_review import compare_canvas, compare_references, reference_result
 from .reports import issue_report, summarize_for_issue
 from .store import Store
+from . import surface as surface_module
 from .tables import csv_data
 
 
@@ -246,6 +247,33 @@ def build_app(data_dir: str) -> Flask:
         if fmt == "data":
             return jsonify(values)
         return content_response(values, "image/png")
+
+    @app.get("/api/inspections/<identifier>/surface/<view>")
+    def surface_review(identifier, view):
+        choice(view, "Surface review view", frozenset(("data", "el", "surface", "native", "csv")))
+        item = store.get(identifier)
+        role = get_role()
+        with engine.slots:
+            if view == "data":
+                return jsonify(surface_module.cross_check(engine, item, role))
+            if view == "csv":
+                data = surface_module.cross_check(engine, item, role)
+                rows = [
+                    {key: value for key, value in row.items() if key != "bounds"}
+                    for row in data["rows"]
+                ]
+                return content_response(csv_data("surface", rows), "text/csv",
+                                        f"{item.module}-surface-crosscheck.csv")
+            if view == "native":
+                content = surface_module.native_surface_marked(engine, item)
+            elif view == "surface":
+                image, _ = surface_module.plane_native(engine, item)
+                content = png_bytes(image)
+            else:
+                context = engine.panel_context(item, role)
+                content = surface_module.cross_check_image(engine, item, role, context.panel)
+        filename = f"{item.module}-surface-{view}.png" if on("download") else None
+        return content_response(content, "image/png", filename)
 
     @app.get("/api/inspections/<identifier>/layer/<kind>.png")
     def layer(identifier, kind):
