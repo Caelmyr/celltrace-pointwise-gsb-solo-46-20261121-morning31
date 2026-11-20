@@ -110,7 +110,10 @@ export function renderWorkbench(app, root) {
   const canvas = $("#plane-overlay", root);
   const version = app.renderVersion;
   const redraw = bindCanvas(canvas, plane, (painter, width, height) => {
-    drawPoints(painter, width, height, ctx.points, {close: ctx.mode === "polygon", numbered: ctx.mode === "polygon"});
+    drawPoints(painter, width, height, ctx.points, {
+      close: ctx.mode === "polygon",
+      numbered: ctx.mode === "polygon" || (ctx.mode === "line" && ctx.points.length > 2),
+    });
     if (ctx.probe?.normalized) paintCrosshair(painter, width, height, ctx.probe.normalized);
   });
   plane.addEventListener("error", async () => {
@@ -123,8 +126,12 @@ export function renderWorkbench(app, root) {
   function go(point) {
     if (ctx.mode === "probe") probeAt(app, root, displayRole, point).then(redraw).catch(app.fail);
     else {
-      if (ctx.mode === "line" && ctx.points.length >= 2) ctx.points = [];
-      if (ctx.points.length >= 48) return app.notify("The region supports up to 48 points.", true);
+      const limit = ctx.mode === "polygon" ? 48 : 24;
+      if (ctx.points.length >= limit) {
+        return app.notify(ctx.mode === "polygon"
+          ? "The region supports up to 48 points."
+          : "A transect path supports up to 24 vertices.", true);
+      }
       ctx.points.push(point);
       redraw();
       configureTools(app, root, displayRole, redraw);
@@ -337,24 +344,100 @@ function configureTools(app, root, role, redraw) {
     $("#clear-shape", tool).onclick = () => { ctx.points = []; redraw(); configureTools(app, root, role, redraw); };
     return;
   }
-  status.textContent = ctx.points.length < 2 ? "Choose the two ends of the strip in the image." : "Run the cross-section across the selected strip.";
+  const count = ctx.points.length;
+  status.textContent = count < 2
+    ? "Click the transect vertices in order. Two points make a straight strip; add more to follow a bend."
+    : `${count} vertices, ${count - 1} segment${count > 2 ? "s" : ""}. Run the cross-section or keep adding points.`;
   tool.innerHTML = `<form class="section-stack"><div class="fields">
-    ${num("Strip width (odd px)", "width", 5, 1, 51, 2)}
-    ${num("Interval (px)", "interval", 1, .5, 24, .5)}</div>
+    ${num("Strip width (odd px)", "width", ctx.strip?.width ?? 5, 1, 51, 2)}
+    ${num("Interval (px)", "interval", ctx.strip?.interval ?? 1, .5, 24, .5)}</div>
     <p class="form-error" hidden></p><div class="toolbar">
-    ${ctx.points.length === 2 ? submit("Measure transect") : button("pending-transect", "Measure transect", "primary", true)}
-    ${button("clear-line", "Clear", "compact", !ctx.points.length)}</div></form><div id="line-result"></div>`;
+    ${count >= 2 ? submit("Measure transect") : button("pending-transect", "Measure transect", "primary", true)}
+    ${button("undo-line", "Remove last", "compact", !count)}
+    ${button("clear-line", "Clear", "compact", !count)}
+    ${button("save-line", "Save path…", "compact", count < 2 || app.case.state === "issued")}</div></form>
+    <div id="line-result"></div>${savedPathList(app)}`;
+  $("#undo-line", tool).onclick = () => { ctx.points.pop(); redraw(); configureTools(app, root, role, redraw); };
   $("#clear-line", tool).onclick = () => { ctx.points = []; redraw(); configureTools(app, root, role, redraw); };
+  $("#save-line", tool).onclick = () => {
+    const settings = Object.fromEntries(new FormData($("form", tool)));
+    savePathDialog(app, role, settings);
+  };
+  $$("[data-open-path]", tool).forEach((node) => {
+    node.onclick = () => {
+      const path = (app.case.paths || []).find((entry) => entry.id === node.dataset.openPath);
+      if (!path) return;
+      ctx.points = path.points.map((value) => [...value]);
+      ctx.strip = {width: path.width, interval: path.interval};
+      redraw();
+      configureTools(app, root, role, redraw);
+      if (path.source_role !== role) app.notify(`Path saved for ${ROLE[path.source_role].toLowerCase()}; measuring the current view.`);
+    };
+  });
+  $$("[data-drop-path]", tool).forEach((node) => {
+    node.onclick = async () => {
+      try {
+        const updated = await request(app.url(`/paths/${node.dataset.dropPath}`), "DELETE", {revision: app.case.revision});
+        await app.update(updated, "Transect path removed.");
+      } catch (error) {
+        app.fail(error);
+      }
+    };
+  });
   wireForm(tool, async (params) => {
     const payload = {...params, role, points: ctx.points.map((value) => [...value])};
+    ctx.strip = {width: params.width, interval: params.interval};
     const result = await request(app.url("/transect"), "POST", payload);
     const other = $("#line-result", tool);
+    const segments = result.summary.segments || [];
+    const overlaps = result.summary.overlaps || [];
     other.innerHTML = `<div class="section-stack">${metrics([
       ["Distance", result.summary.mm_traveled ? `${format(result.summary.mm_traveled)} mm` : `${format(result.summary.pixels_traveled)} px`],
       ["Usable positions", `${result.summary.data_positions} / ${result.summary.positions}`],
-    ])}<div class="toolbar">${button("transect-csv", "Profile CSV")}${button("transect-chart", "Profile plot")}</div></div>`;
+      ...(result.summary.shared_positions ? [["Shared corner stations", result.summary.shared_positions]] : []),
+    ])}
+    ${segments.length > 1 ? table(SEGMENT_COLS, segments) : ""}
+    ${overlaps.map((zone) => `<p class="info">Segments ${zone.segments.join(" & ")} share stations
+      ${zone.first}–${zone.last} (${zone.positions} positions) around ${format(zone.start)}–${format(zone.end)} px.</p>`).join("")}
+    <div class="toolbar">${button("transect-csv", "Profile CSV")}${button("transect-chart", "Profile plot")}</div></div>`;
     $("#transect-csv", other).onclick = () => downloadTool(app, "/transect", payload, "csv");
     $("#transect-chart", other).onclick = () => showTransectPlot(app, payload);
+  });
+}
+
+const SEGMENT_COLS = [
+  ["Seg", "segment"], ["Stations", "stations"], ["Usable", "data_positions"],
+  ["Cells", "cells", join], ["Shared", "shared"],
+  ["Median", "signal", (value) => format(value?.median, 4)],
+];
+
+function savedPathList(app) {
+  const paths = app.case.paths || [];
+  if (!paths.length) return "";
+  return `<div class="section-stack"><h3>Saved transect paths</h3><div class="list">${paths.map((path) => `
+    <div class="list-item"><div><strong>${e(path.name)}</strong>
+    <small>${path.points.length} vertices · width ${path.width} · interval ${path.interval} px · ${e(ROLE[path.source_role])}</small></div>
+    <div class="toolbar"><button type="button" class="compact" data-open-path="${path.id}">Open</button>
+    <button type="button" class="compact" data-drop-path="${path.id}" ${app.case.state === "issued" ? "disabled" : ""}>Delete</button>
+    </div></div>`).join("")}</div></div>`;
+}
+
+function savePathDialog(app, role, settings) {
+  const ctx = app.workspace;
+  const count = (app.case.paths || []).length;
+  const root = app.openDialog("Save transect path", `<form><div class="fields">
+    ${field("Path name", "name", `Path ${count + 1}`, {required: true, wide: true, max: 80})}
+    </div><p class="small-copy">${ctx.points.length} vertices · strip width ${e(settings.width)} px ·
+      interval ${e(settings.interval)} px · ${e(ROLE[role])}. The path stays with this inspection and can be reopened on the image.</p>
+    <p class="form-error" hidden></p><div class="form-actions">${submit("Save path")}</div></form>`);
+  wireForm(root, async ({name}) => {
+    const payload = {
+      name, source_role: role, points: ctx.points.map((value) => [...value]),
+      width: settings.width, interval: settings.interval, revision: app.case.revision,
+    };
+    const updated = await request(app.url("/paths"), "POST", payload);
+    app.modal.close();
+    await app.update(updated, "Transect path saved.");
   });
 }
 

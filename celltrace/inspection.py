@@ -10,6 +10,7 @@ from .model import (
     SENSOR_ROLES, ViewSettings, boolean, choice, file_id, integer, mapping, real, text, utcnow,
 )
 from .store import Store, new_id, summary
+from .transects import get_path, make_path
 
 
 MAX_INSPECTION_IMAGES = 18
@@ -222,6 +223,23 @@ class Inspections:
         removed = get_finding(item, finding_id)
         item.findings = [entry for entry in item.findings if entry.id != removed.id]
         return self.store.save(item, item.revision, "finding withdrawn", {"finding": removed.id})
+
+    def path(self, identifier: str, expected, raw: dict, path_id=None) -> Inspection:
+        item = self.checked(identifier, expected)
+        entry = make_path(item, raw, path_id)
+        if path_id is None:
+            item.paths.append(entry)
+        else:
+            item.paths = [entry if value.id == path_id else value for value in item.paths]
+        return self.store.save(item, item.revision, "transect path updated" if path_id else "transect path recorded", {
+            "path": entry.id, "name": entry.name, "points": len(entry.points), "role": entry.source_role,
+        })
+
+    def remove_path(self, identifier: str, expected, path_id) -> Inspection:
+        item = self.checked(identifier, expected)
+        removed = get_path(item, path_id)
+        item.paths = [entry for entry in item.paths if entry.id != removed.id]
+        return self.store.save(item, item.revision, "transect path removed", {"path": removed.id})
 
 
 def capture_applies_to_findings(inspection: Inspection, identifier: str) -> bool:

@@ -18,7 +18,7 @@ class CellTraceApp {
     this.inspections = [];
     this.case = null;
     this.workspace = {layer: "panel", role: "high", grid: true, labels: true, findings: true, mode: "probe", zoom: 100,
-      points: [], cell: "", probe: null, measure: null};
+      points: [], cell: "", probe: null, measure: null, strip: null};
     this.tab = "bench";
     this.searchTimer = null;
     this.toastTimer = null;
@@ -97,7 +97,7 @@ class CellTraceApp {
     if (changed) {
       Object.assign(this.workspace, {
         role: availableRoles(data)[0] ?? "high", layer: "panel",
-        mode: "probe", cell: "", points: [], measure: null, probe: null, zoom: 100,
+        mode: "probe", cell: "", points: [], measure: null, probe: null, zoom: 100, strip: null,
       });
     }
     if (writeUrl) this.navigate();
@@ -113,7 +113,7 @@ class CellTraceApp {
     this.workspace.measure = null;
     if (switched) {
       this.tab = "bench";
-      Object.assign(this.workspace, {layer: "panel", cell: "", points: [], mode: "probe", zoom: 100});
+      Object.assign(this.workspace, {layer: "panel", cell: "", points: [], mode: "probe", zoom: 100, strip: null});
     }
     this.navigate(true);
     this.render();

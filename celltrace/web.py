@@ -337,6 +337,20 @@ def build_app(data_dir: str) -> Flask:
             return content_response(transect_plot(report), "image/png", f"{item.module}-transect.png")
         return jsonify(report)
 
+    @app.post("/api/inspections/<identifier>/paths")
+    def save_transect_path(identifier):
+        values = json_body()
+        return file_version(service.path(identifier, values.get("revision"), values))
+
+    @app.put("/api/inspections/<identifier>/paths/<path_id>")
+    def edit_transect_path(identifier, path_id):
+        values = json_body()
+        return file_version(service.path(identifier, values.get("revision"), values, path_id))
+
+    @app.delete("/api/inspections/<identifier>/paths/<path_id>")
+    def remove_transect_path(identifier, path_id):
+        return file_version(service.remove_path(identifier, json_body().get("revision"), path_id))
+
     @app.post("/api/inspections/<identifier>/findings")
     def annotate(identifier):
         values = json_body()

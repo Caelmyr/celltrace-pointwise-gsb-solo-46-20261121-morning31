@@ -33,6 +33,8 @@ MAX_UPLOAD_BYTES = 22 * 1024 * 1024
 MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_FINDINGS = 120
 MAX_POLYGON_POINTS = 48
+MAX_PATHS = 60
+MAX_PATH_POINTS = 24
 MAX_HISTORY = 80
 
 
@@ -354,6 +356,36 @@ class Finding:
         )
 
 
+@dataclass(frozen=True)
+class Path:
+    id: str
+    name: str
+    source_role: str
+    points: tuple[tuple[float, float], ...]
+    width: int
+    interval: float
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = mapping(raw, "Transect path")
+        points = xy_list(raw.get("points"), "Path points", 2, MAX_PATH_POINTS, (0, 1), (0, 1))
+        width = integer(raw.get("width", 5), "Strip width", 1, 51)
+        if width % 2 == 0:
+            raise Issue("Strip width must be an odd number of pixels.")
+        return cls(
+            file_id(raw.get("id"), "Path ID"),
+            text(raw.get("name"), "Path name", 80),
+            choice(raw.get("source_role"), "Path source", SENSOR_ROLES),
+            points,
+            width,
+            real(raw.get("interval", 1), "Sampling interval", 0.5, 24),
+            text(raw.get("created_at"), "Path creation time", 100),
+            text(raw.get("updated_at"), "Path edit time", 100),
+        )
+
+
 @dataclass
 class Inspection:
     id: str
@@ -373,6 +405,7 @@ class Inspection:
     display: ViewSettings = field(default_factory=ViewSettings)
     analysis: AnalysisSettings = field(default_factory=AnalysisSettings)
     findings: list[Finding] = field(default_factory=list)
+    paths: list[Path] = field(default_factory=list)
     issue: dict | None = None
 
     def to_dict(self) -> dict:
@@ -418,6 +451,11 @@ class Inspection:
         )]
         if len({finding.id for finding in findings}) != len(findings):
             raise Issue("Finding identifiers must be unique.")
+        paths = [Path.from_dict(value) for value in sequence(
+            raw.get("paths", []), "Transect paths", 0, MAX_PATHS
+        )]
+        if len({path.id for path in paths}) != len(paths):
+            raise Issue("Transect path identifiers must be unique.")
         issue = raw.get("issue")
         if issue is not None:
             issue = mapping(issue, "Issued result")
@@ -442,5 +480,6 @@ class Inspection:
             ViewSettings.from_dict(raw.get("display", {})),
             AnalysisSettings.from_dict(raw.get("analysis", {})),
             findings,
+            paths,
             issue,
         )

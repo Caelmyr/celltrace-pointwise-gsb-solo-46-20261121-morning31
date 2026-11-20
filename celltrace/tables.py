@@ -29,7 +29,10 @@ COLUMNS = {
     "strings": (
         "string", "cells", "coverage", "median_relative", "p90_p10_span", "largest_step", "low_runs", "flags", "readings",
     ),
-    "transect": ("index", "x", "y", "distance", "distance_mm", "cell", "usable", "support", "signal", "spread"),
+    "transect": (
+        "index", "x", "y", "distance", "distance_mm", "segment", "segment_distance",
+        "cell", "usable", "support", "signal", "spread", "shared", "segments",
+    ),
     "lot": ("module", "lot", "state", "measurement", "median", "usable_cells", "total_cells", "crack_count", "dark_count"),
     "lot-cells": (
         "module", "lot", "cell", "pool", "median", "support", "median_relative", "capture", "digest", "issue_date",

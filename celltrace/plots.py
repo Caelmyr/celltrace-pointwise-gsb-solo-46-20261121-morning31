@@ -65,9 +65,20 @@ class Chart:
         self.painter.rectangle((self.left, self.top, self.right, self.bottom), outline=PLOT_FAINT)
 
     def fill_gap(self, lower: float, upper: float):
+        self.shade(lower, upper, MISSING)
+
+    def shade(self, lower: float, upper: float, color, alpha=91):
         x0 = min(self.right, max(self.left, self.x(lower)))
         x1 = max(x0 + 1, min(self.right + 1, self.x(upper)))
-        self.painter.rectangle((x0, self.top, x1, self.bottom), fill=(*MISSING, 91))
+        self.painter.rectangle((x0, self.top, x1, self.bottom), fill=(*color, alpha))
+
+    def mark(self, value: float):
+        pos = self.x(value)
+        self.painter.line((pos, self.top, pos, self.bottom), fill=(*PLOT_AUX, 130), width=1)
+
+    def tag(self, value: float, label: str):
+        pos = self.x(value)
+        self.painter.text((pos, self.top + 12), label, anchor="mm", font=self.label_font, fill=PLOT_AUX)
 
     def stroke(self, xs: list, ys: list, color, width=2):
         group = []
@@ -104,16 +115,33 @@ def y_limits(values, include_zero=True):
 
 def transect_plot(data: dict):
     rows = data["rows"]
-    physical = data["summary"]["mm_traveled"] is not None
+    summary = data["summary"]
+    physical = summary["mm_traveled"] is not None
     label = "Distance (mm)" if physical else "Distance (plane px)"
     key = "distance_mm" if physical else "distance"
     xs = [row[key] for row in rows]
     ys = [row["signal"] for row in rows]
     chart = Chart("Cross-section signal", label, "Relative sensor signal", (xs[0], xs[-1]), y_limits(ys))
-    nominal_step = xs[1] - xs[0]
+
+    def band(index):
+        left = xs[index] if index == 0 else (xs[index - 1] + xs[index]) / 2
+        right = xs[index] if index == len(xs) - 1 else (xs[index] + xs[index + 1]) / 2
+        return left, right
+
+    for index, row in enumerate(rows):
+        if row["shared"]:
+            chart.shade(*band(index), PLOT_AUX)
     for index, row in enumerate(rows):
         if row["signal"] is None:
-            chart.fill_gap(xs[index] - nominal_step / 2, xs[index] + nominal_step / 2)
+            chart.fill_gap(*band(index))
+    segments = summary.get("segments", [])
+    if len(segments) > 1:
+        for segment in segments[1:]:
+            chart.mark(rows[segment["first_index"] - 1][key])
+        for segment in segments:
+            start = rows[segment["first_index"] - 1][key]
+            end = rows[segment["last_index"] - 1][key]
+            chart.tag((start + end) / 2, f"S{segment['segment']}")
     chart.stroke(xs, ys, PLOT_LINE)
     return chart.bytes()
 
