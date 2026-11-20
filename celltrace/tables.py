@@ -41,6 +41,20 @@ COLUMNS = {
                   "coverage", "contrast", "status"),
     "reference": ("region", "bounds", "pixels", "common", "lost", "gained", "increased",
                   "decreased", "old_median", "new_median", "median_delta", "peak_delta"),
+    "baseline-cells": (
+        "cell", "row", "col", "evidence", "samples", "rejected", "relative_median", "relative_mad",
+        "low", "high", "absolute_median", "source_modules",
+    ),
+    "baseline-sources": (
+        "inspection_id", "module", "lot", "capture_id", "digest", "issued_at", "current_a",
+        "exposure_ms", "bit_depth", "white_level", "dark_id", "flat_id", "panel_median",
+        "eligible_cells", "synthetic",
+    ),
+    "baseline-comparison": (
+        "cell", "row", "col", "status", "evidence", "reference_samples", "observed_median",
+        "observed_relative", "reference_relative_median", "reference_relative_mad",
+        "absolute_ratio", "z", "support", "reference_modules", "reasons",
+    ),
 }
 
 

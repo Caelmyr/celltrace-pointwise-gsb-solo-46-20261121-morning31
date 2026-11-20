@@ -20,6 +20,16 @@ The native entry is `python app.py` under Python 3.11 with the versions in `requ
 8. Inspect the **Report** preview, assign a disposition and issue an immutable local evidence archive. An issued inspection can be opened as a working copy. The **Lot review** uses issued snapshots when available and shows image contact sheets and capture settings.
 9. A working exchange ZIP includes the original bytes and working inspection state. Import checks the file inventory, image digests and settings before creating an editable inspection. A calibrated plane ZIP includes a floating-point TIFF, bit-coded support raster and the transform. Cell evidence ZIPs hold the selected crops and their measurements.
 
+## Recipe brightness baselines
+
+The **Baselines** view builds a reusable per-cell-position brightness reference for a recipe, so a new module can be checked position by position against the recipe's normal variation instead of its own average.
+
+1. Open two or more **issued** high-current inspections that share one cell grid. Only confirmed-passing (issued) panels can be selected as reference samples.
+2. Publish a baseline under a recipe name. The same recipe name always creates a new immutable version; older versions stay readable and can be retired or reactivated. Each version carries a content digest and a full event history.
+3. Every cell position stores the panel-relative brightness shape (median and robust MAD), the absolute calibrated median, its observed range, the number of contributing panels and the module names behind it. Positions seen by fewer than three panels are marked **limited evidence**; positions with no supported reading are marked **no reference data**. Individual outlier samples are rejected per position with a robust z score, so one abnormal panel cannot move the limits. Partially covered reference panels simply leave some positions with fewer contributors.
+4. In **Lot review**, the current inspection is compared with the active baseline for its lot (recipe). The check reports out-of-family positions, limited-evidence positions with their contributing panels, uniformly weak rows or columns, and a whole-panel absolute level change. Uniform dimming is evaluated against the stored reference medians, never normalized against the new panel's own mean, so a globally dark panel stays flagged.
+5. Baseline detail and comparison views export PNG maps and CSV tables. The baseline record keeps the original acquisition settings used by every reference panel: drive current, exposure, bit depth, white level and whether dark and flat calibration references were applied.
+
 ## Input and measurement bounds
 
 - Use single-page 8-bit or unsigned 16-bit grayscale PNG or TIFF files. The sensor level ceiling can be declared on upload, for example for 12-bit values stored in a 16-bit file. Supported originals have at least 32 px per side, at most 8 million pixels and a file size up to 22 MiB. Each inspection holds up to 18 originals. Working exchanges are capped at 64 MiB.
@@ -29,6 +39,6 @@ The native entry is `python app.py` under Python 3.11 with the versions in `requ
 - Dark regions are connected areas below a cell-relative cutoff. Crack traces measure narrow valleys inside cell insets, with optional known busbar bands excluded. Both are image indications for review. Thresholds and optics affect the available results.
 - Current response compares observation on the common support of the two declared planes, normalizes by exposure and summarizes eligible cells. Workbench display levels affect preview intensity. Original source data and calibrated readings are available separately.
 - A production lot view displays up to the 12 most recently edited inspections. Groups reflect declared current, exposure, sensor range, grid and calibration availability.
-- Configuration and findings use revision-checked SQLite writes. Original bytes and issued attachments use content addressing in the same data directory. Export an exchange package to transport a working inspection. Use the issued evidence package for the issued record.
+- Configuration and findings use revision-checked SQLite writes. Original bytes and issued attachments use content addressing in the same data directory. Recipe brightness baselines are stored in the same SQLite database as immutable, content-digested versions with their own event log. Export an exchange package to transport a working inspection. Use the issued evidence package for the issued record.
 
 `scripts/count_backend.py` can reproduce the project-owned Python package inventory. From this directory run `python3 scripts/count_backend.py --project-root . --source-root celltrace`. Renderer templates, development tooling and generated local data are outside that package count.

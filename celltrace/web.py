@@ -6,6 +6,9 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.exceptions import BadRequest, HTTPException, RequestEntityTooLarge
 
 from .banding import capture_reference_profile, profile_summary, reference_band_image
+from .baseline import build_baseline, compare_inspection
+from .baseline_render import baseline_canvas, comparison_canvas, overlay_canvas
+from .baseline_store import BaselineStore, summarize as baseline_summary
 from .engine import EL_LAYERS, MEASUREMENT_PLANES, Engine
 from .evidence import evidence_response
 from .exchange import create_exchange, import_exchange, preview_exchange
@@ -93,6 +96,7 @@ def build_app(data_dir: str) -> Flask:
     engine = Engine(store)
     service = Inspections(store)
     lot = LotReview(store, engine)
+    baselines = BaselineStore(store)
 
     @app.errorhandler(Issue)
     def error_response(error):
@@ -436,5 +440,99 @@ def build_app(data_dir: str) -> Flask:
                 return content_response(lot.contact_sheet(label), "image/png", f"{label}-contact-sheet.png")
             effect = "lot" if kind == "csv" else "lot-cells"
             return content_response(lot.sheets(label, effect), "text/csv", f"{label}-{effect}.csv")
+
+    # ------------------------------------------------------------------ brightness baselines
+    @app.get("/api/baselines/recipes")
+    def baseline_recipes():
+        return jsonify(recipes=baselines.recipes())
+
+    @app.get("/api/baselines")
+    def baseline_list():
+        recipe = text(request.args.get("recipe", ""), "Recipe", 80, allow_blank=True)
+        include_retired = on("retired")
+        return jsonify(baselines.list_baselines(recipe, include_retired=include_retired))
+
+    @app.post("/api/baselines")
+    def baseline_create():
+        body = json_body()
+        with engine.slots:
+            baseline, details = build_baseline(
+                baselines, engine,
+                recipe=body.get("recipe", ""),
+                name=body.get("name", ""),
+                inspection_ids=body.get("inspection_ids", []),
+                note=body.get("note", ""),
+                z_limit=body.get("z_limit", 3.0),
+                low_ratio=body.get("low_ratio", 0.82),
+                global_dim_ratio=body.get("global_dim_ratio", 0.85),
+            )
+        response = jsonify({**baseline_summary(baseline), "build": details})
+        response.headers["ETag"] = f'"{baseline.id}-{baseline.version}"'
+        return response
+
+    @app.get("/api/baselines/<identifier>")
+    def baseline_detail(identifier):
+        baseline = baselines.get(identifier)
+        return jsonify({
+            **baseline.to_dict(),
+            "summary": baseline_summary(baseline),
+            "events": baselines.events(identifier),
+        })
+
+    @app.get("/api/baselines/<identifier>/<view>")
+    def baseline_views(identifier, view):
+        choice(view, "Baseline view", frozenset(("image", "cells", "sources", "csv")))
+        baseline = baselines.get(identifier)
+        if view == "image":
+            return content_response(baseline_canvas(baseline), "image/png",
+                                    f"{baseline.recipe}-baseline-v{baseline.version}.png")
+        if view == "csv":
+            kind = "baseline-cells" if request.args.get("table") == "cells" else "baseline-sources"
+            rows = [cell for cell in baseline.to_dict()["cells"]] if kind == "baseline-cells" \
+                else [source for source in baseline.to_dict()["sources"]]
+            return content_response(csv_data(kind, rows), "text/csv",
+                                    f"{baseline.recipe}-{kind}.csv")
+        if view == "cells":
+            return jsonify(rows=baseline.to_dict()["cells"])
+        return jsonify(rows=baseline.to_dict()["sources"])
+
+    @app.post("/api/baselines/<identifier>/retire")
+    def baseline_retire(identifier):
+        baseline = baselines.set_state(identifier, "retired", {"recipe": baselines.get(identifier).recipe})
+        return jsonify(baseline_summary(baseline))
+
+    @app.post("/api/baselines/<identifier>/reactivate")
+    def baseline_reactivate(identifier):
+        baseline = baselines.set_state(identifier, "active", {"recipe": baselines.get(identifier).recipe})
+        return jsonify(baseline_summary(baseline))
+
+    @app.get("/api/inspections/<identifier>/baseline-comparison/<view>")
+    def baseline_comparison(identifier, view):
+        choice(view, "Baseline comparison view", frozenset(("data", "image", "overlay", "csv")))
+        item = store.get(identifier)
+        explicit = text(request.args.get("baseline", ""), "Baseline", 32, allow_blank=True)
+        if explicit:
+            baseline = baselines.get(explicit)
+        else:
+            recipe = text(request.args.get("recipe", item.lot), "Recipe", 80)
+            baseline = baselines.active_for_recipe(recipe)
+            if baseline is None:
+                raise Issue(f"No active brightness baseline exists for recipe {recipe}.", 404)
+        with engine.slots:
+            result = compare_inspection(engine, baseline, item)
+            if view == "image":
+                content = comparison_canvas(baseline, result)
+                return content_response(content, "image/png",
+                                        f"{item.module}-baseline-v{baseline.version}.png")
+            if view == "overlay":
+                content = overlay_canvas(item, engine, result)
+                return content_response(content, "image/png",
+                                        f"{item.module}-baseline-overlay.png")
+        if view == "csv":
+            return content_response(
+                csv_data("baseline-comparison", result["rows"]), "text/csv",
+                f"{item.module}-baseline-comparison.csv",
+            )
+        return jsonify(result)
 
     return app

@@ -272,3 +272,21 @@ form > .small-copy, form > .warning { margin-top: 9px; }
 #archive-info, #region-result, #line-result { margin-top: 8px; }
 #layer-metrics .warning { margin-top: 7px; }
 details > summary { color: var(--accent); cursor: pointer; font-size: 12px; }
+
+/* Recipe brightness baselines */
+.baseline-recipe h2 { font-size: 15px; }
+.pick-list {
+  display: grid; gap: 6px; max-height: 260px; overflow: auto; margin: 10px 0;
+  padding: 8px; background: #0b1419; border: 1px solid var(--line); border-radius: 7px;
+}
+.check-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 6px;
+  background: var(--panel-hi); border: 1px solid var(--line); cursor: pointer;
+}
+.check-row:hover { border-color: var(--line-hi); }
+.check-row input { width: 16px; height: 16px; accent-color: var(--accent); }
+.check-row span { display: grid; gap: 2px; min-width: 0; }
+.check-row small { color: var(--muted); font-size: 11px; }
+.baseline-detail { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.baseline-map { width: 100%; border-radius: 7px; border: 1px solid var(--line); background: #0e171b; }
+@media (max-width: 900px) { .baseline-detail { grid-template-columns: 1fr; } }

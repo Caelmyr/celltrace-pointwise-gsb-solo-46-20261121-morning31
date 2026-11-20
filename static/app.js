@@ -4,10 +4,11 @@ import {
 import {renderWorkbench} from "./bench.js";
 import {renderCaptures, showPlane} from "./captures.js";
 import {renderFindings, renderLot, renderReport, showHistory} from "./reviews.js";
+import {renderBaselines} from "./baselines.js";
 
 const TABS = [
   ["bench", "Image bench"], ["captures", "Captures"], ["findings", "Findings"],
-  ["report", "Report"], ["lot", "Lot review"],
+  ["report", "Report"], ["lot", "Lot review"], ["baselines", "Baselines"],
 ];
 
 class CellTraceApp {
@@ -139,7 +140,8 @@ class CellTraceApp {
 
   showTab(tab) {
     this.tab = tab;
-    this.navigate();
+    if (this.case) this.navigate();
+    else history.pushState(null, "", named("/", {view: tab === "bench" ? null : tab}));
     this.render();
   }
 
@@ -147,6 +149,17 @@ class CellTraceApp {
     this.renderVersion += 1;
     this.main.setAttribute("aria-busy", "false");
     if (!this.case) {
+      if (this.tab === "baselines") {
+        this.main.innerHTML = `
+          <header class="page-header"><div><div class="crumbs"><span>Recipe library</span></div>
+            <div class="headline"><h1>Brightness baselines</h1></div></div></header>
+          <nav class="tabs" aria-label="Recipe views">${TABS.map(([key, name]) =>
+            `<button type="button" data-tab="${key}" class="${this.tab === key ? "selected" : ""}">${name}</button>`).join("")}</nav>
+          <section id="active-view"></section>`;
+        $$("[data-tab]").forEach((node) => { node.onclick = () => this.showTab(node.dataset.tab); });
+        renderBaselines(this, $("#active-view"));
+        return;
+      }
       this.main.innerHTML = `<section class="hero">
         <h1>Electroluminescence inspection</h1>
         <p>Review paired EL captures, align the module, measure image evidence, and issue a local inspection record.</p>
@@ -181,6 +194,10 @@ class CellTraceApp {
     $("#case-plane").onclick = () => showPlane(this);
     $$("[data-tab]").forEach((node) => { node.onclick = () => this.showTab(node.dataset.tab); });
     const view = $("#active-view");
+    if (this.tab === "baselines") {
+      renderBaselines(this, view);
+      return;
+    }
     const renderTab = {bench: renderWorkbench, captures: renderCaptures, findings: renderFindings, report: renderReport, lot: renderLot};
     renderTab[this.tab](this, view);
   }

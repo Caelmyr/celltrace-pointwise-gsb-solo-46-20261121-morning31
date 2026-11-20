@@ -2,6 +2,7 @@ import {
   $, $$, ROLE, badge, button, changeLabel, dateLabel, definition, download, e, field, format,
   itemCard, metrics, percent, request, submit, table, wireForm,
 } from "./ui.js";
+import {renderComparisonPanel} from "./baselines.js";
 
 const CATEGORIES = [["dark", "Dark area"], ["crack", "Crack"], ["suspect", "Needs review"], ["capture", "Capture artifact"], ["general", "General"]];
 const STATES = [["open", "Open"], ["hold", "Hold"], ["confirmed", "Confirmed"], ["cleared", "Cleared"]];
@@ -195,6 +196,9 @@ export async function renderLot(app, root) {
     $$("[data-case-jump]", root).forEach((entry) => {
       entry.onclick = () => { app.tab = "bench"; app.loadCase(entry.dataset.caseJump, true).catch(app.fail); };
     });
+    const compareHost = document.createElement("div");
+    root.appendChild(compareHost);
+    renderComparisonPanel(app, compareHost).catch(app.fail);
   } catch (error) {
     if (app.renderVersion === viewAt) root.innerHTML = itemCard("Lot review", `<p class="error">${e(error.message)}</p>`);
   }
